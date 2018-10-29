@@ -4,51 +4,65 @@
 # @Email   : kenhuang866@qq.com
 # @File    : main.py
 # @Software: PyCharm Community Edition
+
 import time # 用来统计代码运行花费时间
 # 记录代码运行开始时间
 time_code_start = time.time()
 import pandas as pd
 import datetime
 import numpy as np
-# from WindPy import w # wind的插件
 from funs import code_num2wind_code_str
-
+import dill
 num_selected = 100
+
+
+
 #### 取数据
 
-# 读取EXCEL里的数据，这里我们只读取1 2 5列，即成分股信息
-raw_data = pd.read_excel("000905历史样本、行业分类.xls",usecols=[0, 1, 4, ])
+# 读取EXCEL里的数据，这里我们只读取1 2 5列，即开始日，截止日和成分股
+raw_data = pd.read_excel("000905历史样本、行业分类.xls",usecols=[0, 1, 4, 10])
 # 读进的日期数据全是数字，我们将其转换为字符串
 raw_data["生效日"] = raw_data["生效日"].map(lambda x: "%8d" % x)
-today = int(datetime.datetime.now().strftime("%Y%m%d"))
-raw_data.fillna(today, inplace=True)
-raw_data["截止日"] = raw_data["截止日"].map(lambda x: "%8d" % x)
+
+raw_data["截止日"] = raw_data["截止日"].map(lambda x: "%8d" % x if not np.isnan(x) else np.nan)
 
 # 证券代码由1， 600000这样的数字转换为000001.SZ,600000.SH
 raw_data["证券代码"] = raw_data["证券代码"].map(code_num2wind_code_str)
 
-# 得到每一天的成分股
-constitute = raw_data.groupby("生效日").apply(lambda x: x.loc[:, "证券代码"].tolist())
-#
-# # 从wind里取数据的过程
-# w.start()
-# tmp_dict = {}
-# for date in constitute.index:
-#     print(date)
-#     date_minus1year = str(int(date)-10000)
-#     field_str = "stdevr"
-#     para_str = "startDate=%s;endDate=%s;period=1;returnType=1" % (date_minus1year, date)
-#     _, tmp_df = w.wss(constitute[date], field_str, para_str, usedf=True)
-#     tmp_dict[date] = tmp_df.squeeze()
-#
-# ser_vol_long = pd.concat(tmp_dict, axis=0)
-# ser_vol_long.index.names = ["date", "code"]
-# ser_vol_long.name = "vol"
-# ser_vol_long.to_excel("中证500成分股过去1年波动率.xlsx")
+# 中证500行业从2008年开始的，因此之前的成分股没有该数据，暂时先剔除，若要使用后面行业数据前推，需要更多数据 详细说明
+raw_data.dropna(subset=["中证二级"], inplace=True)
 
-ser_vol_long = pd.read_excel("中证500成分股过去1年波动率.xlsx", index_col=[0, 1], squeeze=True)
-ser_vol_long.index.set_levels(ser_vol_long.index.levels[0].map(str), level=0, inplace=True)
+# 得到每一开始日对应的成分股方式一
+constitute = {}
+for start_date in raw_data["生效日"].unique():
+    tmp_list = raw_data.loc[raw_data["生效日"] == start_date, "证券代码"].tolist()
+    constitute[start_date] = tmp_list
+
+# # 得到每一开始日对应的成分股方式二
+# constitute = raw_data.groupby("生效日").apply(lambda x: x.loc[:, "证券代码"].tolist()).to_dict()
+
+# 从wind里取数据的过程
+from WindPy import w # wind的插件
+w.start()
+tmp_dict = {}
+for date in constitute:
+    print(date)
+    date_minus1year = str(int(date)-10000)
+    para_str = "startDate=%s;endDate=%s;period=1;returnType=1" % (date_minus1year, date)
+    _, tmp_df = w.wss(constitute[date], "stdevr", para_str, usedf=True)
+    tmp_dict[date] = tmp_df.squeeze()
+
+ser_vol_long = pd.concat(tmp_dict, axis=0)
+ser_vol_long.index.names = ["date", "code"]
+ser_vol_long.name = "vol"
+
+
+dill.dump_session("data.pkl")
+
+dill.load_session("data.pkl")
+# ser_vol_long是个长格式数据，与宽格式数据有明显不同
 # df_vol_wide = ser_vol_long.unstack(1)
+
 
 #### 选样
 
